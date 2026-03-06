@@ -1,0 +1,15 @@
+venv/
+
+__pycache__/
+
+*.json
+
+output/
+*.xlsx
+*.xls
+*.csv
+*.pdf
+
+.idea/
+.DS_Store
+.gitignore
