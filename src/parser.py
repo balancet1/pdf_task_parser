@@ -1,3 +1,4 @@
+# src/parser.py
 import pdfplumber
 import re
 from datetime import datetime
@@ -7,6 +8,17 @@ class TaskParser:
     def __init__(self, pdf_path: str):
         self.pdf_path = pdf_path
         self.tasks = []
+        
+        # ========== НАСТРОЙКИ ПОЛЕЙ (МЕНЯЙ ЗДЕСЬ!) ==========
+        # Ключевые слова для поиска даты (можно добавлять любые)
+        self.date_keywords = ['Срок', 'Дата', 'Дедлайн', 'Due', 'Выполнить до', 'Deadline']
+        
+        # Ключевые слова для поиска ответственного (можно добавлять любые)
+        self.resp_keywords = ['Отв.', 'Исполнитель', 'Ответственный', 'Исп.', 'Assignee', 'Responsible']
+        
+        # Разделители между словом и значением
+        self.separators = r'\s*[—–-:]?\s*'  # пробел, тире, двоеточие
+        # ====================================================
     
     def extract_text(self) -> str:
         """Извлекает весь текст из PDF"""
@@ -63,33 +75,51 @@ class TaskParser:
                 current_description = [task_start]
             
             elif current_task:
-                # Добавляем строку к описанию (в любом случае)
+                # Добавляем строку к описанию
                 current_description.append(line)
                 current_task['description_parts'].append(line)
                 
-                # ========== ИЩЕМ ДАТУ ==========
-                # Ищем дату в формате ДД.ММ.ГГГГ после слова "Срок"
-                date_match = re.search(r'Срок\s*[—–-]?\s*(\d{2}\.\d{2}\.\d{4})', line)
-                if date_match:
-                    date_str = date_match.group(1).strip()
-                    current_task['due_date_str'] = date_str
-                    try:
-                        current_task['due_date'] = datetime.strptime(date_str, '%d.%m.%Y').date()
-                    except ValueError as e:
-                        print(f"⚠️ Ошибка парсинга даты {date_str}: {e}")
+                # ========== ПОИСК ДАТЫ (В ЛЮБОМ МЕСТЕ СТРОКИ) ==========
+                # Ищем дату в формате ДД.ММ.ГГГГ после любого ключевого слова
+                for keyword in self.date_keywords:
+                    escaped_keyword = re.escape(keyword)
+                    # Паттерн: ключевое слово + разделитель + дата
+                    pattern = rf'{escaped_keyword}{self.separators}(\d{{2}}\.\d{{2}}\.\d{{4}})'
+                    date_match = re.search(pattern, line)
+                    
+                    if date_match:
+                        date_str = date_match.group(1).strip()
+                        current_task['due_date_str'] = date_str
+                        try:
+                            current_task['due_date'] = datetime.strptime(date_str, '%d.%m.%Y').date()
+                        except ValueError as e:
+                            print(f"⚠️ Ошибка парсинга даты {date_str}: {e}")
+                        break  # Нашли дату, дальше не ищем
                 
-                # ========== ИЩЕМ ОТВЕТСТВЕННОГО ==========
-                # Ищем "Отв.:" и всё после до конца строки или до "Срок"
-                resp_match = re.search(r'Отв\.:\s*([^С]+?)(?:\s+Срок|$)', line)
-                if not resp_match:
-                    # Если не нашли с "Срок", ищем просто до конца строки
-                    resp_match = re.search(r'Отв\.:\s*([^\n]+)', line)
-                
-                if resp_match:
-                    responsible = resp_match.group(1).strip()
-                    # Очищаем от лишних символов
-                    responsible = re.sub(r'\s+', ' ', responsible)
-                    current_task['responsible'] = responsible
+                # ========== ПОИСК ОТВЕТСТВЕННОГО (В ЛЮБОМ МЕСТЕ СТРОКИ) ==========
+                for keyword in self.resp_keywords:
+                    escaped_keyword = re.escape(keyword)
+                    
+                    # Простой вариант: ищем ключевое слово и всё после до конца строки
+                    pattern = rf'{escaped_keyword}{self.separators}([^\n]+)'
+                    resp_match = re.search(pattern, line)
+                    
+                    if resp_match:
+                        responsible = resp_match.group(1).strip()
+                        
+                        # Обрезаем, если дальше идёт ключевое слово даты
+                        for date_keyword in self.date_keywords:
+                            if date_keyword in responsible:
+                                responsible = responsible.split(date_keyword)[0].strip()
+                                break
+                        
+                        # Очищаем от лишних символов
+                        responsible = re.sub(r'\s+', ' ', responsible)
+                        responsible = re.sub(r'[;,.!?]+$', '', responsible)
+                        
+                        if responsible:  # Если не пустое
+                            current_task['responsible'] = responsible
+                            break  # Нашли ответственного, дальше не ищем
         
         # Сохраняем последнюю задачу
         if current_task:
@@ -101,9 +131,7 @@ class TaskParser:
     
     def _save_current_task(self, task: Dict, description_lines: List[str]):
         """Формирует полное описание задачи"""
-        # Объединяем все строки в одно описание
         full_desc = ' '.join(description_lines)
-        # Очищаем от лишних пробелов
         full_desc = re.sub(r'\s+', ' ', full_desc)
         task['full_description'] = full_desc
     
@@ -138,43 +166,3 @@ class TaskParser:
         
         df = pd.DataFrame(data)
         return df
-
-
-# Тестирование
-if __name__ == "__main__":
-    import sys
-    import os
-    
-    # Путь к PDF файлу (можно передать как аргумент)
-    if len(sys.argv) > 1:
-        pdf_file = sys.argv[1]
-    else:
-        pdf_file = "data/tasks.pdf"
-    
-    if not os.path.exists(pdf_file):
-        print(f"❌ Файл не найден: {pdf_file}")
-        sys.exit(1)
-    
-    print(f"\n📄 Тестирование парсера на файле: {pdf_file}")
-    print("=" * 60)
-    
-    # Создаем парсер
-    parser = TaskParser(pdf_file)
-    
-    # Извлекаем текст
-    text = parser.extract_text()
-    
-    if text:
-        # Парсим задачи
-        tasks = parser.parse_tasks(text)
-        
-        # Выводим результат
-        parser.print_tasks()
-        
-        # Показываем статистику
-        print("\n📊 Статистика:")
-        print(f"   Всего задач: {len(tasks)}")
-        print(f"   Задач с ответственным: {sum(1 for t in tasks if t['responsible'])}")
-        print(f"   Задач с датой: {sum(1 for t in tasks if t['due_date_str'])}")
-    else:
-        print("❌ Не удалось извлечь текст из PDF")

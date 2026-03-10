@@ -65,6 +65,9 @@ python3 run.py data/tasks.pdf --sheets "URL" --calendar "ID"
 # Несколько PDF-файлов из папки data сразу
 python3 run_all.py
 
+## Для запуска без суммаризации нужно добавить флаг **--no-summary** ##
+(python3 run.py data/tasks.pdf --no-summary)
+
 
 
 
